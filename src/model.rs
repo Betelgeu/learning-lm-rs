@@ -30,6 +30,7 @@ impl Llama<f32> {
         let config: LlamaConfigJson = serde_json::from_reader(config).unwrap();
         let model_file = std::fs::read(model_dir.as_ref().join("model.safetensors")).unwrap();
         let safetensor = SafeTensors::deserialize(&model_file).unwrap();
+        println!("Available tensors: {:?}", safetensor.names());
         let params = LLamaParams::from_safetensors(&safetensor, &config);
 
         Self {
@@ -134,9 +135,9 @@ impl Llama<f32> {
         temperature: f32,
     ) -> Vec<u32>{
         let mut result = Vec::<u32>::new();
-        
+
         todo!("实现文本生成");
-        
+
         result
     }
 }
@@ -167,7 +168,18 @@ fn mlp(
     rms_w: &Tensor<f32>,
     eps: f32,
 ) {
-    todo!("Implement mlp");
+    // hidden = rms_norm(residual)
+    OP::rms_norm(hidden_states, residual, rms_w, eps);
+    // gate = hidden @ gate_weight.T
+    OP::matmul_transb(gate, 0., hidden_states, w_gate, 1.);
+    // up = hidden @ up_weight.T
+    OP::matmul_transb(up, 0., hidden_states, w_up, 1.);
+    // act = gate * sigmoid(gate) * up ## SwiGLU
+    OP::swiglu(up, gate); // up里存储的是act了
+    // output = act @ down_weight.T
+    // residual = output + residual
+    // 这里用一个matmul就能完成两个操作
+    OP::matmul_transb(residual, 1., up, w_down, 1.);
 }
 
 #[test]

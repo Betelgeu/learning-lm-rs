@@ -1,15 +1,20 @@
 use std::{slice, sync::Arc, vec};
 pub struct Tensor<T> {
+    // Arc类似c++中的shared_ptr
+    // Box类似c++中的unique_ptr, 表示堆上的数据
     data: Arc<Box<[T]>>,
     shape: Vec<usize>,
-    offset: usize,
-    length: usize,
+    offset: usize, // offset为了实现slice服务
+    length: usize, // number of elements
 }
 
 impl<T: Copy + Clone + Default> Tensor<T> {
     pub fn new(data: Vec<T>, shape: &Vec<usize>) -> Self {
         let length = data.len();
         Tensor {
+            // into_boxed_slice()将Vec<T>转换为Box<[T]>
+            // try_into()将Box<[T]>转换为Box<[T; N]>
+            // unwrap()Box<T>转换为T
             data: Arc::new(data.into_boxed_slice().try_into().unwrap()),
             shape: shape.clone(),
             offset: 0,
@@ -74,7 +79,7 @@ impl Tensor<f32> {
         }
         let a = self.data();
         let b = other.data();
-        
+
         return a.iter().zip(b).all(|(x, y)| float_eq(x, y, rel));
     }
     #[allow(unused)]
