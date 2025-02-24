@@ -102,10 +102,42 @@ impl Llama<f32> {
             let full_k = &mut cache.k_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
             let full_v = &mut cache.v_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
 
-            todo!("self_attention(...)");
-            todo!("down_proj matmul and add residual");
+            // todo!("self_attention(...)");
+            self_attention(
+                &mut hidden_states,
+                &mut att_scores,
+                q,
+                full_k,
+                full_v,
+                self.n_kv_h,
+                n_groups,
+                seq_len,
+                total_seq_len,
+                self.dqkv,
+            );
+            // todo!("down_proj matmul and add residual");
+            // out = attn_V @ O_weight.T
+            // residual = out + residual
+            OP::matmul_transb(
+                &mut residual,
+                1.0,
+                &hidden_states,
+                &self.params.wo[layer],
+                1.0,
+            );
 
-            todo!("mlp(...)");
+            // todo!("mlp(...)");
+            mlp(
+                &mut residual,
+                &mut hidden_states,
+                &mut gate_buf,
+                &mut up_buf,
+                &self.params.w_up[layer],
+                &self.params.w_down[layer],
+                &self.params.w_gate[layer],
+                &self.params.rms_ffn_w[layer],
+                self.eps,
+            );
         }
 
         // No matter what seq_len, the output is always a 1D vector of length vocab,
@@ -136,7 +168,18 @@ impl Llama<f32> {
     ) -> Vec<u32>{
         let mut result = Vec::<u32>::new();
 
-        todo!("实现文本生成");
+        // todo!("实现文本生成");
+        let mut cache = self.new_cache();
+        let mut input = Tensor::<u32>::new(Vec::from(token_ids), &vec![1, token_ids.len()]);
+
+        loop {
+            let output = OP::random_sample(&self.forward(&input, &mut cache), top_p, top_k, temperature);
+            result.push(output);
+            if result.len() >= max_len || output == self.eos_token_id {
+                break;
+            }
+            input = Tensor::<u32>::new(Vec::from([output]), &vec![1, 1]);
+        }
 
         result
     }
@@ -154,7 +197,53 @@ fn self_attention(
     total_seq_len: usize,
     dqkv: usize,
 ) {
-    todo!("Implement self_attention");
+    // todo!("Implement self_attention");
+    //_att_scores = Q @ K.T / sqrt(dim)
+    let _att_scores = unsafe {att_scores.data_mut()};
+    let _q = q.data();
+    let _k = k.data();
+    let _v = v.data();
+    let sqrt_dim = (dqkv as f32).sqrt();
+
+    // 首先对QK矩阵乘法
+    // (seq, n_kv_h * n_groups * dqkv) @ (total_seq, n_kv_h * dqkv).T
+    // -> (n_kv_h, n_groups, seq, total_seq)
+    // 这里一个group中的n_kv_h个Q对应1个K
+
+    // iter_q_head
+    for q_head in 0..(n_groups * n_kv_h) {
+        for q_seq in 0..seq_len {
+            for k_seq in 0..total_seq_len {
+                // 注意这里第q_head个Q头对应第q_head / n_groups个K头
+                let q_base = q_seq * n_groups * n_kv_h * dqkv + q_head * dqkv;
+                let k_base = k_seq * n_kv_h * dqkv + q_head / n_groups * dqkv;
+                let sum = (0..dqkv).map(|i|
+                    _q[q_base + i] * _k[k_base + i]
+                ).sum::<f32>();
+                // 其实一个seq, total_sql上就是一个q_head长度的向量
+                _att_scores[q_head * seq_len * total_seq_len + q_seq * total_seq_len + k_seq]
+                    = sum / sqrt_dim;
+            }
+        }
+    }
+
+    // masked_softmax
+    OP::masked_softmax(att_scores);
+
+    // att_v = att_scores @ V
+    let _att = att_scores.data();
+    let _h = unsafe {hidden_states.data_mut()};
+    for q_head in 0..(n_groups * n_kv_h) {
+        for q_seq in 0..seq_len {
+            for i in 0..dqkv {
+                let sum = (0..total_seq_len).map(|k_seq|
+                    _att[q_head * seq_len * total_seq_len + q_seq * total_seq_len + k_seq]
+                    * _v[k_seq * n_kv_h * dqkv + q_head / n_groups * dqkv + i]
+                ).sum::<f32>();
+                _h[q_seq * n_kv_h * n_groups * dqkv + q_head * dqkv + i] = sum;
+            }
+        }
+    }
 }
 
 fn mlp(
@@ -168,6 +257,8 @@ fn mlp(
     rms_w: &Tensor<f32>,
     eps: f32,
 ) {
+    // output = down(up(x) + silu(gate(x)))
+
     // hidden = rms_norm(residual)
     OP::rms_norm(hidden_states, residual, rms_w, eps);
     // gate = hidden @ gate_weight.T

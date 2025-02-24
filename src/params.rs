@@ -6,8 +6,8 @@ pub struct LLamaParams<T> {
     // token_id to embedding lookup table
     pub embedding_table: Tensor<T>, // (vocab_size, dim)
     // decoder layer
-    pub rms_att_w: Vec<Tensor<T>>, // (hidden_size, ) x layers
-    pub wq: Vec<Tensor<T>>,        // (n_heads * head_size, hidden_size) x layers
+    pub rms_att_w: Vec<Tensor<T>>, // (hidden_size, ) x layers 注意很多权重是以转制的形式存储的
+    pub wq: Vec<Tensor<T>>,        // (n_heads * head_size, hidden_size) x layers 注意这里Q的头可能是KV的整数倍, 因为用的是GHQ
     pub wk: Vec<Tensor<T>>,        // (n_kv_heads * head_size, hidden_size) x layers
     pub wv: Vec<Tensor<T>>,        // (n_kv_heads * head_size, hidden_size) x layers
     pub wo: Vec<Tensor<T>>,        // (hidden_size, n_heads * head_size) x layers
