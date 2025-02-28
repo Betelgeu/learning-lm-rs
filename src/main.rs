@@ -4,6 +4,9 @@ mod model;
 mod operators;
 mod params;
 mod tensor;
+mod gpu;
+#[cfg(test)]
+mod perf_tests;
 
 use std::path::PathBuf;
 use tokenizers::Tokenizer;

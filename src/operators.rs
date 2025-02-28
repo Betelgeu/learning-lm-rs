@@ -1,6 +1,20 @@
 use crate::tensor::Tensor;
 
+#[cfg(feature = "gpu")]
+use crate::gpu::*; // 引入 GPU kernel 实现
+
+
 // get (row) vectors from a 2D table given a list of indices
+#[cfg(feature = "gpu")]
+pub fn gather<U: Copy + Default + cust::memory::DeviceCopy>(
+    y: &mut Tensor<f32>,
+    indices: &Tensor<u32>,
+    table: &Tensor<U>,
+) {
+    gather_kernel(y, indices, table).expect("GPU gather failed");
+}
+
+#[cfg(not(feature = "gpu"))]
 pub fn gather(y: &mut Tensor<f32>, indices: &Tensor<u32>, table: &Tensor<f32>) {
     let length = indices.size();
     let table_shape = table.shape();
@@ -15,6 +29,12 @@ pub fn gather(y: &mut Tensor<f32>, indices: &Tensor<u32>, table: &Tensor<f32>) {
 }
 
 // RoPE: Rotary Positional Embedding
+#[cfg(feature = "gpu")]
+pub fn rope(y: &mut Tensor<f32>, start_pos: usize, theta: f32) {
+    rope_kernel(y, start_pos, theta).expect("GPU rope failed");
+}
+
+#[cfg(not(feature = "gpu"))]
 pub fn rope(y: &mut Tensor<f32>, start_pos: usize, theta: f32) {
     let shape = y.shape();
     assert!(shape.len() == 3);
@@ -37,6 +57,12 @@ pub fn rope(y: &mut Tensor<f32>, start_pos: usize, theta: f32) {
     }
 }
 
+#[cfg(feature = "gpu")]
+pub fn masked_softmax(y: &mut Tensor<f32>) {
+    masked_softmax_kernel(y).expect("GPU masked_softmax failed");
+}
+
+#[cfg(not(feature = "gpu"))]
 // softmax(x) = exp(x - max) / sum(exp(x - max))
 // y = softmax(mask(x))
 pub fn masked_softmax(y: &mut Tensor<f32>) {
@@ -70,6 +96,12 @@ pub fn masked_softmax(y: &mut Tensor<f32>) {
     }
 }
 
+#[cfg(feature = "gpu")]
+pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
+    rms_norm_kernel(y, x, w, epsilon).expect("GPU rms_norm failed");
+}
+
+#[cfg(not(feature = "gpu"))]
 pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
     // todo!("实现 rms_norm，计算前做一些必要的检查会帮助你后续调试")
     let len = y.size();
@@ -98,6 +130,13 @@ pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: 
 
 // y = silu(x) * y
 // hint: this is an element-wise operation
+#[cfg(feature = "gpu")]
+pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
+    // 调用 GPU 实现，GPU kernel 内部将完成 element-wise 计算
+    swiglu_kernel(y, x).expect("GPU swiglu failed");
+}
+
+#[cfg(not(feature = "gpu"))]
 pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
     let len = y.size();
     assert!(len == x.size());
@@ -117,6 +156,19 @@ pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
 
 // C = beta * C + alpha * A @ B^T
 // hint: You don't need to do an explicit transpose of B
+#[cfg(feature = "gpu")]
+pub fn matmul_transb<U: Copy + Default + Sync + cust::memory::DeviceCopy>(
+    c: &mut Tensor<f32>,
+    beta: f32,
+    a: &Tensor<f32>,
+    b: &Tensor<U>,
+    alpha: f32,
+) {
+    // 调用 GPU 实现，可以使用 cuBLAS 等库来完成矩阵乘法
+    matmul_transb_kernel(c, beta, a, b, alpha).expect("GPU matmul_transb failed");
+}
+
+#[cfg(not(feature = "gpu"))]
 pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
     // 作业部分先只考虑二维矩阵
     // 并且暂时不考虑broadcasting
