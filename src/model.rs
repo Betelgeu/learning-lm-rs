@@ -183,6 +183,32 @@ impl Llama<f32> {
 
         result
     }
+
+    pub fn chat_generate<'a>(
+        &'a self,
+        token_ids: &[u32],
+        max_len: usize,
+        top_p: f32,
+        top_k: u32,
+        temperature: f32,
+        kvcache: &'a mut KVCache<f32>,
+    ) -> impl Iterator<Item = u32> + 'a {
+
+        let mut result = Vec::<u32>::new();
+        let mut input = Tensor::<u32>::new(Vec::from(token_ids), &vec![1, result.len()]);
+
+        std::iter::from_fn(move ||  {
+            let output = OP::random_sample(&self.forward(&input, kvcache), top_p, top_k, temperature);
+            result.push(output);
+            input = Tensor::<u32>::new(Vec::from([output]), &vec![1, 1]);
+
+            if result.len() >= max_len || output == self.eos_token_id {
+                None
+            } else {
+                Some(output)
+            }
+        })
+    }
 }
 
 fn self_attention(

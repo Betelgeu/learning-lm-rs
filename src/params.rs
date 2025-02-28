@@ -39,7 +39,13 @@ impl LLamaParams<f32> {
 
         LLamaParams {
             // tie_word_embeddings = true
-            embedding_table: get_tensor("lm_head.weight"),
+            // 注意，如果tie_word_embeddings为true，那么embedding_table和lm_head是同一个
+            // chat模型里不是共用的
+            embedding_table: if config.tie_word_embeddings {
+                get_tensor("lm_head.weight")
+            } else {
+                get_tensor("model.embed_tokens.weight") // chat模型中的
+            },
 
             rms_att_w: (0..layers)
                 .map(|i| get_tensor(&format!("model.layers.{i}.input_layernorm.weight")))
