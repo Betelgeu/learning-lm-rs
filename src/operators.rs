@@ -156,6 +156,10 @@ pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
 
 // C = beta * C + alpha * A @ B^T
 // hint: You don't need to do an explicit transpose of B
+// 这里matmul分为三个版本
+// 1. 通用版本，不考虑任何优化, 无gpu标记时编译, 并且非x86_64平台下编译
+// 2. 使用SIMD加速的版本, 只有无gpu标记，并且在x86_64平台下才会编译
+// 3. 使用GPU加速的版本, 有gpu标记时编译
 #[cfg(feature = "gpu")]
 pub fn matmul_transb<U: Copy + Default + Sync + cust::memory::DeviceCopy>(
     c: &mut Tensor<f32>,
@@ -168,7 +172,35 @@ pub fn matmul_transb<U: Copy + Default + Sync + cust::memory::DeviceCopy>(
     matmul_transb_kernel(c, beta, a, b, alpha).expect("GPU matmul_transb failed");
 }
 
-#[cfg(not(feature = "gpu"))]
+// https://doc.rust-lang.org/core/arch/index.html
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+#[cfg(target_arch = "x86_64")]
+unsafe fn matmul_f32_avx2(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
+    let a_shape = a.shape(); // (m, k)
+    let b_shape = b.shape(); // (n, k)
+    let _a = a.data();
+    let _b = b.data();
+    let _c = unsafe { c.data_mut() };
+    let (i, j, k) = (a_shape[0], b_shape[0], a_shape[1]);
+    for x in 0..i {
+        for y in 0..j {
+            let mut sum_vec = _mm256_setzero_ps();
+            for z in (0..k).step_by(8) {
+                let a_vec = _mm256_loadu_ps(_a.as_ptr().add(x * k + z));
+                let b_vec = _mm256_loadu_ps(_b.as_ptr().add(y * k + z));
+                sum_vec   = _mm256_fmadd_ps(a_vec, b_vec, sum_vec);
+            }
+            let mut sum_arr = [0.0; 8];
+            _mm256_storeu_ps(sum_arr.as_mut_ptr(), sum_vec);
+            let sum = sum_arr.iter().sum::<f32>();
+
+            _c[x * j + y] *= beta;
+            _c[x * j + y] += alpha * sum;
+        }
+    }
+}
+#[cfg(all(target_arch = "x86_64", not(feature = "gpu")))]
 pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
     // 作业部分先只考虑二维矩阵
     // 并且暂时不考虑broadcasting
@@ -188,7 +220,45 @@ pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor
     let a_data = a.data();
     let b_data = b.data();
     let c_data = unsafe { c.data_mut() };
+    if is_x86_feature_detected!("avx2") && k % 8 == 0 {
+        unsafe {
+            matmul_f32_avx2(c, beta, a, b, alpha);
+        }
+    } else{
+        for i in 0..m {
+            for j in 0..n {
+                let mut sum = 0.0;
+                for l in 0..k {
+                    // a[i][l]
+                    // bT[l][j] = b[j][l]
+                    sum += a_data[i * k + l] * b_data[j * k + l];
+                }
+                c_data[i * n + j] = beta * c_data[i * n + j] + alpha * sum;
+            }
+        }
+    }
+}
 
+#[cfg(all(not(target_arch = "x86_64"), not(feature = "gpu")))]
+pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
+    // 作业部分先只考虑二维矩阵
+    // 并且暂时不考虑broadcasting
+    let c_shape = c.shape(); // (m, n)
+    let a_shape = a.shape(); // (m, k)
+    let b_shape = b.shape(); // (n, k)
+    assert!(c_shape.len() == 2);
+    assert!(a_shape.len() == 2);
+    assert!(b_shape.len() == 2);
+    assert!(c_shape[0] == a_shape[0]);
+    assert!(c_shape[1] == b_shape[0]);
+    assert!(a_shape[1] == b_shape[1]);
+
+    let m = c_shape[0];
+    let n = c_shape[1];
+    let k = a_shape[1];
+    let a_data = a.data();
+    let b_data = b.data();
+    let c_data = unsafe { c.data_mut() };
     for i in 0..m {
         for j in 0..n {
             let mut sum = 0.0;
