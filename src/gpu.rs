@@ -291,8 +291,7 @@ pub fn matmul_transb_kernel<U: Copy + Default + Sync + DeviceCopy>(
     let function = module.get_function("matmul_transb_kernel")
         .map_err(|e| GpuError(e.to_string()))?;
 
-    // 采用 2D block 与 grid
-    let block_dim = (16, 16, 1);
+    let block_dim = (32, 32, 1);
     let grid_dim = (
         ((n as u32) + block_dim.0 - 1) / block_dim.0,
         ((m as u32) + block_dim.1 - 1) / block_dim.1,
@@ -316,6 +315,10 @@ pub fn matmul_transb_kernel<U: Copy + Default + Sync + DeviceCopy>(
         .map_err(|e| GpuError(e.to_string()))?;
     Ok(())
 }
+
+// GPU实现flash attention
+// 设计一个新的算子，实现flash attention的计算
+
 
 /// 加载 CUDA 模块（直接返回静态模块引用）
 fn load_module() -> Result<&'static Module, GpuError> {

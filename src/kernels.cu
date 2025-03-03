@@ -37,7 +37,8 @@ extern "C" {
 
     // 3. masked_softmax_kernel：对每行进行 softmax（带masked）
     __global__ void masked_softmax_kernel(float* y, unsigned int batch, unsigned int seq_len, unsigned int total_seq_len) {
-        // 每个 block 处理一行
+        // 每个 block 处理一个batch
+        // 每个 thread 处理一个 其中一行kv结果
         unsigned int b = blockIdx.x;
         unsigned int i = threadIdx.x;
         if(b < batch && i < seq_len) {
@@ -103,6 +104,41 @@ extern "C" {
             }
             c[row * n + col] = beta * c[row * n + col] + alpha * sum;
         }
+    }
+
+    #define BLOCK_SIZE 32
+    __global__ void matmul_transb_kernel_v2(const float* A, const float* B, float* C, unsigned int M, unsigned int N, unsigned int K, float beta, float alpha) {
+        int bx = blockIdx.x;
+        int by = blockIdx.y;
+        int tx = threadIdx.x;
+        int ty = threadIdx.y;
+        int idx = bx * blockDim.x + tx;
+        int idy = by * blockDim.y + ty;
+        if (idx >= N || idy >= M) return;
+
+        __shared__ float sA[BLOCK_SIZE * BLOCK_SIZE];
+        __shared__ float sB[BLOCK_SIZE * BLOCK_SIZE];
+
+        A = &A[(by * BLOCK_SIZE) * K];
+        B = &B[bx * BLOCK_SIZE];
+        C = &C[(by * BLOCK_SIZE) * N + bx * BLOCK_SIZE];
+
+        float sum = 0.0f;
+        for(int k = 0; k < K; k += BLOCK_SIZE) {
+            // global -> shared
+            sA[ty * BLOCK_SIZE + tx] = k * BLOCK_SIZE + tx < K ? A[ty * K + tx] : 0.0f;
+            sB[ty * BLOCK_SIZE + tx] = k * BLOCK_SIZE + ty < K ? B[ty * N + tx] : 0.0f;
+            __syncthreads();
+            A = A + BLOCK_SIZE;
+            B = B + BLOCK_SIZE * N;
+            // calc sum
+            for(int i = 0; i < BLOCK_SIZE; i++) {
+                sum += sA[ty * BLOCK_SIZE + i] * sB[i * BLOCK_SIZE + tx];
+            }
+            __syncthreads();
+        }
+
+        C[ty * N + tx] = beta * C[ty * N + tx] + alpha * sum;
     }
 
     } // extern "C"
